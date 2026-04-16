@@ -15,8 +15,8 @@ def compare_tables(query: str, connections: List[Engine]) -> None:
             for j in range(i + 1, len(dataframes)):
                 old_tables = set(dataframes[i]["TABLE_NAME"])
                 new_tables = set(dataframes[j]["TABLE_NAME"])
-                print(f"In Old Linode DB but not DigitalOcean DB: {old_tables - new_tables}")
-                print(f"In New DigitalOcean DB but not Linode DB: {new_tables - old_tables}")
+                print(f"In source only: {old_tables - new_tables}")
+                print(f"In target only: {new_tables - old_tables}")
                 print(f"In both: {old_tables & new_tables}")
     except Exception as error:
         print(f"Comparison failed: {error}")
