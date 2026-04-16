@@ -18,7 +18,9 @@ def get_shared_tables(source_engine: Engine, target_engine:Engine)-> set:
 
 @click.group()
 def cli():
-    pass
+    """
+    Sync data between two MySQL databases.
+    """
 
 @cli.command()
 @click.option("--source", envvar="SOURCE_DB_URL", required=True, help="Source DB connection string")
@@ -75,5 +77,18 @@ def migrate(source: str, target: str, tables: set, dry_run: bool, batch_size: in
     return
 
 @cli.command()
-def validate():
-    pass
+@click.option("--source", envvar="SOURCE_DB_URL", required=True, help="Source DB connection string")
+@click.option("--target", envvar="TARGET_DB_URL", required=True, help="Target DB connection string")
+@click.option("--tables", required=False, help="Shared table list between the two databases")
+def validate(source: str, target: str, tables: set):
+    source_engine = create_engine(source)
+    target_engine = create_engine(target)
+
+    tables = set(table.strip() for table in tables.split(",")) if tables else get_shared_tables(source_engine, target_engine)
+
+    run_validation(source_engine, target_engine, tables)
+
+    return
+
+if __name__ == "__main__":
+    cli()
