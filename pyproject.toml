@@ -1,6 +1,10 @@
 [tool.uv]
 package = true
 
+[tool.setuptools]                                                                                  
+packages = ["queries", "migration", "comparison", "validation"]
+py-modules = ["main"]
+
 [project]
 name = "syncdb"
 version = "0.1.0"
