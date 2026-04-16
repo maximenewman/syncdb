@@ -1,0 +1,37 @@
+import pandas as pd
+from sqlalchemy import text, Engine
+
+
+def migrate_table(table_name: str, source_engine: Engine, target_engine: Engine, batch_size: int = 100) -> dict:
+    """
+    Extract all rows from a source table and INSERT IGNORE into the target.
+    NaN values are converted to NULL before insertion.
+    Returns a stats dict with source row count, inserted count, and status.
+    """
+
+    df = pd.read_sql(f"SELECT * FROM `{table_name}`", source_engine)
+    total = len(df)
+
+    if total == 0:
+        print(f"{table_name}: empty, skipping")
+        return {"table": table_name, "source": 0, "inserted": 0, "status": "skipped"}
+
+    cols_sql = ", ".join(f"`{col}`" for col in df.columns)
+    placeholders = ", ".join(f":{col}" for col in df.columns)
+
+    insert_sql = text(
+        f"INSERT IGNORE INTO `{table_name}` ({cols_sql}) VALUES ({placeholders})"
+    )
+
+    rows = df.astype(object).where(df.notna(), None).to_dict("records")
+    inserted = 0
+
+    with target_engine.begin() as conn:
+        for batch_num, offset in enumerate(range(0, len(rows), batch_size), start=1):
+            batch = rows[offset:offset + batch_size]
+            batch_result = conn.execute(insert_sql, batch)
+            inserted += batch_result.rowcount
+            print(f"batch {batch_num}: sent {len(batch)}, inserted {batch_result.rowcount}")
+
+    print(f"✓ {table_name}: {inserted} new rows inserted out of {total}")
+    return {"table": table_name, "source": total, "inserted": inserted, "status": "ok"}
