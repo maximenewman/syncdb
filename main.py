@@ -56,8 +56,23 @@ def compare(source: str, target: str) -> None:
     return
 
 @cli.command()
-def migrate():
-    pass
+@click.option("--source", envvar="SOURCE_DB_URL", required=True, help="Source DB connection string")
+@click.option("--target", envvar="TARGET_DB_URL", required=True, help="Target DB connection string")
+@click.option("--tables", required=False, help="Shared table list between the two databases")
+@click.option("--dry-run", is_flag=True, default=False, required=False, help="Safe mode, no migration is ran, just a visual of table differences")
+@click.option("--batch-size", default=100, show_default=True, help="Rows per INSERT batch")
+def migrate(source: str, target: str, tables: set, dry_run: bool, batch_size: int):
+    source_engine = create_engine(source)
+    target_engine = create_engine(target)
+    tables = set(table.strip() for table in tables.split(",")) if tables else get_shared_tables(source_engine, target_engine)
+
+    if dry_run:
+        for table in tables:
+            print(table)
+        return
+
+    run_migration(source_engine, target_engine, tables, batch_size)
+    return
 
 @cli.command()
 def validate():
