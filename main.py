@@ -23,11 +23,14 @@ def cli():
     """
 
 @cli.command()
-@click.option("--source", envvar="SOURCE_DB_URL", required=True, help="Source DB connection string")
-@click.option("--target", envvar="TARGET_DB_URL", required=True, help="Target DB connection string")
+@click.option("--source", envvar="SOURCE_DB_URL", required=True, help="""MySQL connection string for the source database (e.g. mysql+pymysql://user:pass@host:3306/db).  
+Falls back to SOURCE_DB_URL env var.""")
+@click.option("--target", envvar="TARGET_DB_URL", required=True, help="""MySQL connection string for the source database (e.g. mysql+pymysql://user:pass@host:3306/db).  
+Falls back to SOURCE_DB_URL env var.""")
 def compare(source: str, target: str) -> None:
     """
-    Compare the contents of the two databases, and output their differences
+    Compare schemas and row counts between source and target. Reports missing tables,    
+    column differences, and empty tables.
     """
     source_engine = create_engine(source)
     target_engine = create_engine(target)
@@ -58,12 +61,20 @@ def compare(source: str, target: str) -> None:
     return
 
 @cli.command()
-@click.option("--source", envvar="SOURCE_DB_URL", required=True, help="Source DB connection string")
-@click.option("--target", envvar="TARGET_DB_URL", required=True, help="Target DB connection string")
-@click.option("--tables", required=False, help="Shared table list between the two databases")
-@click.option("--dry-run", is_flag=True, default=False, required=False, help="Safe mode, no migration is ran, just a visual of table differences")
+@click.option("--source", envvar="SOURCE_DB_URL", required=True, help="""MySQL connection string for the source database (e.g. mysql+pymysql://user:pass@host:3306/db).  
+Falls back to SOURCE_DB_URL env var.""")
+@click.option("--target", envvar="TARGET_DB_URL", required=True, help="""MySQL connection string for the source database (e.g. mysql+pymysql://user:pass@host:3306/db).  
+Falls back to SOURCE_DB_URL env var.""")
+@click.option("--tables", required=False, help="""Shared table list between the two databases.
+Comma-separated list of tables to process (e.g. users,orders,products). Defaults to all shared tables.""")
+@click.option("--dry-run", is_flag=True, default=False, required=False, help="""Safe mode, no migration is ran. 
+Preview which tables would be migrated without writing any data to the target.""")
 @click.option("--batch-size", default=100, show_default=True, help="Rows per INSERT batch")
 def migrate(source: str, target: str, tables: set, dry_run: bool, batch_size: int):
+    """
+    Migrate missing rows from source to target using INSERT IGNORE. Respects FK ordering 
+    and processes tables in configurable batches.
+    """
     source_engine = create_engine(source)
     target_engine = create_engine(target)
     tables = set(table.strip() for table in tables.split(",")) if tables else get_shared_tables(source_engine, target_engine)
@@ -77,10 +88,17 @@ def migrate(source: str, target: str, tables: set, dry_run: bool, batch_size: in
     return
 
 @cli.command()
-@click.option("--source", envvar="SOURCE_DB_URL", required=True, help="Source DB connection string")
-@click.option("--target", envvar="TARGET_DB_URL", required=True, help="Target DB connection string")
-@click.option("--tables", required=False, help="Shared table list between the two databases")
+@click.option("--source", envvar="SOURCE_DB_URL", required=True, help="""MySQL connection string for the source database (e.g. mysql+pymysql://user:pass@host:3306/db).  
+Falls back to SOURCE_DB_URL env var.""")
+@click.option("--target", envvar="TARGET_DB_URL", required=True, help="""MySQL connection string for the source database (e.g. mysql+pymysql://user:pass@host:3306/db).  
+Falls back to SOURCE_DB_URL env var.""")
+@click.option("--tables", required=False, help="""Shared table list between the two databases.
+Comma-separated list of tables to process (e.g. users,orders,products). Defaults to all shared tables.""")
 def validate(source: str, target: str, tables: set):
+    """
+    Verify migration completeness by comparing primary keys between source and target.  
+    Reports any rows present in source but missing from target.
+    """
     source_engine = create_engine(source)
     target_engine = create_engine(target)
 
