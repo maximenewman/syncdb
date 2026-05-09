@@ -40,7 +40,9 @@ uv sync
 ### Requirements
 
 - Python 3.12+
-- Access to both MySQL databases (source and target)
+- Access to both databases (source and target)
+- **Every table must have a primary key.** syncdb uses primary keys for both row-skip semantics (`INSERT IGNORE`/`ON CONFLICT DO NOTHING`) and post-migration validation. Tables without a PK are skipped during validation and cannot be safely re-run.
+- **Postgres targets require elevated privileges.** Disabling FK checks on Postgres (`session_replication_role = replica`) requires superuser or `pg_write_server_files` membership. Without it, FK-violating loads will fail mid-migration. MySQL targets only need normal write access.
 
 ## Quick start
 
@@ -143,8 +145,9 @@ syncdb/
 ├── comparison/
 │   ├── comparison.py              # Schema diff logic
 │   └── empty_tables.py            # Row count report
-├── queries/
-│   └── information_schema.py      # All SQL queries
+├── dialects/
+│   ├── base.py                    # Dialect abstract interface
+│   └── mysql.py                   # MySQL implementation
 └── pyproject.toml
 ```
 
