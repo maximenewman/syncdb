@@ -2,7 +2,7 @@
 package = true
 
 [tool.setuptools]                                                                                  
-packages = ["queries", "migration", "comparison", "validation"]
+packages = ["dialects", "migration", "comparison", "validation"]
 py-modules = ["main"]
 
 [project]

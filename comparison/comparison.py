@@ -1,63 +1,66 @@
-from typing import List
 import pandas as pd
-from sqlalchemy import text, Engine
-from queries import COLUMNS_FOR_TABLE
+from sqlalchemy import Engine
+
+from dialects import Dialect
 
 
-def compare_tables(query: str, connections: List[Engine]) -> None:
+def compare_tables(
+    source_engine: Engine,
+    target_engine: Engine,
+    source_dialect: Dialect,
+    target_dialect: Dialect,
+) -> None:
     """
-    Run a table-listing query against each connection and print
-    which tables are present in one DB but missing from the other.
+    Print which tables are present in one DB but missing from the other.
     """
-    dataframes = [pd.read_sql(query, connection) for connection in connections]
     try:
-        for i in range(len(dataframes)):
-            for j in range(i + 1, len(dataframes)):
-                old_tables = set(dataframes[i]["TABLE_NAME"])
-                new_tables = set(dataframes[j]["TABLE_NAME"])
-                print(f"In source only: {old_tables - new_tables}")
-                print(f"In target only: {new_tables - old_tables}")
-                print(f"In both: {old_tables & new_tables}")
+        source_tables = source_dialect.get_all_tables(source_engine)
+        target_tables = target_dialect.get_all_tables(target_engine)
+        print(f"In source only: {source_tables - target_tables}")
+        print(f"In target only: {target_tables - source_tables}")
+        print(f"In both: {source_tables & target_tables}")
     except Exception as error:
         print(f"Comparison failed: {error}")
         raise
 
 
-def compare_columns(query: str, table_name: str, connections: List[Engine]) -> pd.DataFrame:
+def compare_columns(
+    table_name: str,
+    source_engine: Engine,
+    target_engine: Engine,
+    source_dialect: Dialect,
+    target_dialect: Dialect,
+) -> pd.DataFrame:
     """
     Compare column metadata for a specific table across two databases.
     Returns a DataFrame with one row per column and a 'status' field:
       - matched: column exists in both with the same type
       - type_changed: column exists in both but types differ
-      - old_db_only: column only exists in the source DB
-      - new_db_only: column only exists in the target DB
+      - source_only: column only exists in the source DB
+      - target_only: column only exists in the target DB
     """
-    old_cols, new_cols = [
-        pd.read_sql(text(query), conn, params={"table_name": table_name})
-        for conn in connections
-    ]
+    source_cols = source_dialect.get_columns(source_engine, table_name)
+    target_cols = target_dialect.get_columns(target_engine, table_name)
 
-    merged = old_cols.merge(
-        new_cols,
-        on="COLUMN_NAME",
+    merged = source_cols.merge(
+        target_cols,
+        on="column_name",
         how="outer",
-        suffixes=("_old", "_new"),
+        suffixes=("_source", "_target"),
         indicator=True,
     )
 
     status_map = {
         "both": "matched",
-        "left_only": "old_db_only",
-        "right_only": "new_db_only",
+        "left_only": "source_only",
+        "right_only": "target_only",
     }
     merged["status"] = merged["_merge"].map(status_map).astype(str)
 
     type_changed = (
         (merged["status"] == "matched")
-        & (merged["COLUMN_TYPE_old"] != merged["COLUMN_TYPE_new"])
+        & (merged["column_type_source"] != merged["column_type_target"])
     )
     merged.loc[type_changed, "status"] = "type_changed"
 
     return merged
-
-

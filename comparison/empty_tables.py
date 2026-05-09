@@ -1,28 +1,30 @@
 import pandas as pd
-from sqlalchemy import text, Engine
+from sqlalchemy import Engine, text
+
+from dialects import Dialect
+
 
 def _bar(n, max_n, width=30):
     filled = int(n / max_n * width) if max_n else 0
     return "#" * filled + "." * (width - filled)
 
 
-def report_empty_tables(engine: Engine, label: str) -> None:
-    with engine.connect() as conn:
-        tables = pd.read_sql(
-            text("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
-                 "WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_SCHEMA = DATABASE()"),
-            conn,
-        )["TABLE_NAME"].tolist()
+def report_empty_tables(engine: Engine, dialect: Dialect, label: str) -> None:
+    tables = sorted(dialect.get_all_tables(engine))
 
-        rows = []
-        for table in sorted(tables):
-            count = conn.execute(text(f"SELECT COUNT(*) FROM `{table}`")).scalar()
-            rows.append({"table": table, "row_count": count})
+    with engine.connect() as conn:
+        rows = [
+            {
+                "table": table,
+                "row_count": conn.execute(text(dialect.count_rows_sql(table))).scalar(),
+            }
+            for table in tables
+        ]
 
     df        = pd.DataFrame(rows).sort_values("row_count")
     empty     = df[df["row_count"] == 0]
     populated = df[df["row_count"] >  0]
-    col_w     = max(len(t) for t in df["table"]) + 2
+    col_w     = max(len(t) for t in df["table"]) + 2 if not df.empty else 10
     max_rows  = populated["row_count"].max() if not populated.empty else 1
     sep       = "-" * (col_w + 45)
 
@@ -43,5 +45,3 @@ def report_empty_tables(engine: Engine, label: str) -> None:
     print(f"  Total tables : {len(df)}")
     print(f"  Populated    : {len(populated)}")
     print(f"  Empty        : {len(empty)}\n")
-
-
