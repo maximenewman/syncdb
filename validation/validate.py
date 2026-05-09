@@ -1,38 +1,35 @@
 import pandas as pd
-from sqlalchemy import Engine, text
-from queries.information_schema import PRIMARY_KEYS
+from sqlalchemy import Engine
+
+from dialects import Dialect
 
 
-def get_primary_key(table_name: str, engine: Engine) -> list | None:
+def validate_table(
+    table_name: str,
+    source_engine: Engine,
+    target_engine: Engine,
+    source_dialect: Dialect,
+    target_dialect: Dialect,
+) -> dict:
     """
-    Return the ordered list of primary key column names for a table,
-    or None if the table has no primary key.
+    Compare primary keys between source and target to verify migration
+    completeness. Prints a one-line summary per table and a sample of any
+    missing PKs. Returns a dict with counts of shared, missing, and extra
+    rows plus a pass/fail status.
     """
-    with engine.connect() as conn:
-        result = pd.read_sql(text(PRIMARY_KEYS), conn, params={"table_name": table_name})
-
-    if result.empty:
-        return None
-
-    return result["COLUMN_NAME"].tolist()
-
-
-def validate_table(table_name: str, source_engine: Engine, target_engine: Engine) -> dict:
-    """
-    Compare primary keys between source and target to verify migration completeness.
-    Prints a one-line summary per table and a sample of any missing PKs.
-    Returns a dict with counts of shared, missing, and extra rows plus a pass/fail status.
-    """
-    pk_columns = get_primary_key(table_name, source_engine)
+    pk_columns = source_dialect.get_primary_keys(source_engine, table_name)
 
     if not pk_columns:
         print(f"{table_name}: no primary key, skipping validation")
         return {"table": table_name, "status": "no_pk"}
 
-    pk_sql = ", ".join(f"`{col}`" for col in pk_columns)
+    source_pk_sql = ", ".join(source_dialect.quote_identifier(c) for c in pk_columns)
+    target_pk_sql = ", ".join(target_dialect.quote_identifier(c) for c in pk_columns)
+    source_table = source_dialect.quote_identifier(table_name)
+    target_table = target_dialect.quote_identifier(table_name)
 
-    old_keys = pd.read_sql(f"SELECT {pk_sql} FROM `{table_name}`", source_engine)
-    new_keys = pd.read_sql(f"SELECT {pk_sql} FROM `{table_name}`", target_engine)
+    old_keys = pd.read_sql(f"SELECT {source_pk_sql} FROM {source_table}", source_engine)
+    new_keys = pd.read_sql(f"SELECT {target_pk_sql} FROM {target_table}", target_engine)
 
     # tuples handles composite primary keys
     old_set = set(old_keys.itertuples(index=False, name=None))
