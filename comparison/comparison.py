@@ -1,29 +1,27 @@
 from typing import List
+
 import pandas as pd
-from sqlalchemy import text, Engine
-from queries import COLUMNS_FOR_TABLE
+from sqlalchemy import Engine
+
+from dialects import get_dialect
 
 
-def compare_tables(query: str, connections: List[Engine]) -> None:
+def compare_tables(connections: List[Engine]) -> None:
     """
-    Run a table-listing query against each connection and print
-    which tables are present in one DB but missing from the other.
+    List tables on each connection and print which tables are present in one
+    database but missing from the other.
     """
-    dataframes = [pd.read_sql(query, connection) for connection in connections]
-    try:
-        for i in range(len(dataframes)):
-            for j in range(i + 1, len(dataframes)):
-                old_tables = set(dataframes[i]["TABLE_NAME"])
-                new_tables = set(dataframes[j]["TABLE_NAME"])
-                print(f"In source only: {old_tables - new_tables}")
-                print(f"In target only: {new_tables - old_tables}")
-                print(f"In both: {old_tables & new_tables}")
-    except Exception as error:
-        print(f"Comparison failed: {error}")
-        raise
+    table_sets = [get_dialect(conn).get_all_tables(conn) for conn in connections]
+    for i in range(len(table_sets)):
+        for j in range(i + 1, len(table_sets)):
+            source_tables = table_sets[i]
+            target_tables = table_sets[j]
+            print(f"In source only: {source_tables - target_tables}")
+            print(f"In target only: {target_tables - source_tables}")
+            print(f"In both: {source_tables & target_tables}")
 
 
-def compare_columns(query: str, table_name: str, connections: List[Engine]) -> pd.DataFrame:
+def compare_columns(table_name: str, connections: List[Engine]) -> pd.DataFrame:
     """
     Compare column metadata for a specific table across two databases.
     Returns a DataFrame with one row per column and a 'status' field:
@@ -33,8 +31,7 @@ def compare_columns(query: str, table_name: str, connections: List[Engine]) -> p
       - new_db_only: column only exists in the target DB
     """
     old_cols, new_cols = [
-        pd.read_sql(text(query), conn, params={"table_name": table_name})
-        for conn in connections
+        get_dialect(conn).get_columns(conn, table_name) for conn in connections
     ]
 
     merged = old_cols.merge(
@@ -59,5 +56,3 @@ def compare_columns(query: str, table_name: str, connections: List[Engine]) -> p
     merged.loc[type_changed, "status"] = "type_changed"
 
     return merged
-
-

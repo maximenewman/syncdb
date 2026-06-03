@@ -1,6 +1,7 @@
 import pandas as pd
-from sqlalchemy import Engine, text
-from queries.information_schema import PRIMARY_KEYS
+from sqlalchemy import Engine
+
+from dialects import get_dialect
 
 
 def get_primary_key(table_name: str, engine: Engine) -> list | None:
@@ -8,13 +9,8 @@ def get_primary_key(table_name: str, engine: Engine) -> list | None:
     Return the ordered list of primary key column names for a table,
     or None if the table has no primary key.
     """
-    with engine.connect() as conn:
-        result = pd.read_sql(text(PRIMARY_KEYS), conn, params={"table_name": table_name})
-
-    if result.empty:
-        return None
-
-    return result["COLUMN_NAME"].tolist()
+    pk_columns = get_dialect(engine).get_primary_keys(engine, table_name)
+    return pk_columns or None
 
 
 def validate_table(table_name: str, source_engine: Engine, target_engine: Engine) -> dict:

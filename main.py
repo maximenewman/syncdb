@@ -3,7 +3,7 @@ import pandas as pd
 from dotenv import load_dotenv                                                                   
 from sqlalchemy import create_engine, Engine
 
-from queries.information_schema import ALL_TABLES, COLUMNS_FOR_TABLE
+from dialects import get_dialect
 from comparison.comparison import compare_tables, compare_columns
 from comparison.empty_tables import report_empty_tables
 from migration.migrate import run_migration
@@ -12,8 +12,8 @@ from validation.run_validation import run_validation
 load_dotenv()
 
 def get_shared_tables(source_engine: Engine, target_engine:Engine)-> set:
-    source_tables = set(pd.read_sql(ALL_TABLES, source_engine)["TABLE_NAME"])
-    target_tables = set(pd.read_sql(ALL_TABLES, target_engine)["TABLE_NAME"])
+    source_tables = get_dialect(source_engine).get_all_tables(source_engine)
+    target_tables = get_dialect(target_engine).get_all_tables(target_engine)
     return source_tables & target_tables
 
 @click.group()
@@ -36,12 +36,12 @@ def compare(source: str, target: str) -> None:
     target_engine = create_engine(target)
 
    
-    compare_tables(ALL_TABLES, [source_engine, target_engine])
+    compare_tables([source_engine, target_engine])
 
     shared = get_shared_tables(source_engine, target_engine)
     all_diffs = []
     for table in sorted(shared):
-        diff = compare_columns(COLUMNS_FOR_TABLE, table, [source_engine, target_engine])
+        diff = compare_columns(table, [source_engine, target_engine])
         diff["TABLE_NAME"] = table
         all_diffs.append(diff)
     

@@ -1,7 +1,9 @@
 import pandas as pd
-from sqlalchemy import text, Engine
-from queries.information_schema import FOREIGN_KEYS
+from sqlalchemy import Engine
+
+from dialects import get_dialect
+
 
 def get_fk_graph(engine: Engine) -> pd.DataFrame:
-    """Fetch the foreing key dependency graph from the database."""
-    return pd.read_sql(text(FOREIGN_KEYS), engine)
+    """Fetch the foreign key dependency graph from the database."""
+    return get_dialect(engine).get_foreign_keys(engine)

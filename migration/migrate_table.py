@@ -1,10 +1,13 @@
 import pandas as pd
 from sqlalchemy import text, Engine
 
+from dialects import get_dialect
+
 
 def migrate_table(table_name: str, source_engine: Engine, target_engine: Engine, batch_size: int = 100) -> dict:
     """
-    Extract all rows from a source table and INSERT IGNORE into the target.
+    Extract all rows from a source table and insert them into the target,
+    skipping rows that already exist.
     NaN values are converted to NULL before insertion.
     Returns a stats dict with source row count, inserted count, and status.
     """
@@ -16,11 +19,9 @@ def migrate_table(table_name: str, source_engine: Engine, target_engine: Engine,
         print(f"{table_name}: empty, skipping")
         return {"table": table_name, "source": 0, "inserted": 0, "status": "skipped"}
 
-    cols_sql = ", ".join(f"`{col}`" for col in df.columns)
-    placeholders = ", ".join(f":{col}" for col in df.columns)
-
+    target_dialect = get_dialect(target_engine)
     insert_sql = text(
-        f"INSERT IGNORE INTO `{table_name}` ({cols_sql}) VALUES ({placeholders})"
+        target_dialect.insert_skipping_duplicates_sql(table_name, list(df.columns))
     )
 
     rows = df.astype(object).where(df.notna(), None).to_dict("records")

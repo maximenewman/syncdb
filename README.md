@@ -122,6 +122,7 @@ syncdb runs in five phases:
 ## Limitations
 
 - **MySQL only** — Currently supports MySQL-to-MySQL migrations.
+- **Primary keys required** — Every table must have a primary key. syncdb relies on primary keys to skip duplicate rows during migration and to verify completeness during validation. Tables without a primary key are skipped.
 - **Same schema assumed** — Works best when source and target share the same table and column structure. Column renames and computed transformations are not supported.
 - **INSERT IGNORE only** — Existing rows in the target are never updated. If you need to overwrite target data with source data, this tool is not the right fit.
 - **No streaming for large tables** — Each table is fully read into memory before inserting. For tables with millions of rows, consider increasing batch size or running on a machine with sufficient RAM.
@@ -131,10 +132,14 @@ syncdb runs in five phases:
 ```
 syncdb/
 ├── main.py                        # CLI entry point
+├── dialects/
+│   ├── base.py                    # Dialect interface (abstract base class)
+│   ├── mysql.py                   # MySQL queries and SQL builders
+│   └── __init__.py                # get_dialect() factory
 ├── migration/
 │   ├── get_fk_graph.py            # Fetch FK dependency graph
 │   ├── resolve_table_order.py     # Topological sort on FK graph
-│   ├── migrate_table.py           # Extract + INSERT IGNORE for one table
+│   ├── migrate_table.py           # Extract + insert (skipping duplicates) for one table
 │   ├── set_fk_checks.py           # Toggle FK constraints
 │   └── migrate.py                 # Orchestrates full migration
 ├── validation/
@@ -143,8 +148,8 @@ syncdb/
 ├── comparison/
 │   ├── comparison.py              # Schema diff logic
 │   └── empty_tables.py            # Row count report
-├── queries/
-│   └── information_schema.py      # All SQL queries
+├── tests/
+│   └── test_mysql_dialect.py      # Unit tests for the MySQL dialect
 └── pyproject.toml
 ```
 
