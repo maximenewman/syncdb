@@ -1,27 +1,32 @@
 import pandas as pd
-from sqlalchemy import text, Engine
+from sqlalchemy import Engine, text
+
+from dialects import Dialect
 
 
-def migrate_table(table_name: str, source_engine: Engine, target_engine: Engine, batch_size: int = 100) -> dict:
+def migrate_table(
+    table_name: str,
+    source_engine: Engine,
+    target_engine: Engine,
+    source_dialect: Dialect,
+    target_dialect: Dialect,
+    batch_size: int = 100,
+) -> dict:
     """
-    Extract all rows from a source table and INSERT IGNORE into the target.
-    NaN values are converted to NULL before insertion.
+    Extract all rows from a source table and insert into the target,
+    skipping rows that conflict on PK/unique. NaN values are converted
+    to NULL before insertion.
     Returns a stats dict with source row count, inserted count, and status.
     """
 
-    df = pd.read_sql(f"SELECT * FROM `{table_name}`", source_engine)
+    df = pd.read_sql(source_dialect.select_all_sql(table_name), source_engine)
     total = len(df)
 
     if total == 0:
         print(f"{table_name}: empty, skipping")
         return {"table": table_name, "source": 0, "inserted": 0, "status": "skipped"}
 
-    cols_sql = ", ".join(f"`{col}`" for col in df.columns)
-    placeholders = ", ".join(f":{col}" for col in df.columns)
-
-    insert_sql = text(
-        f"INSERT IGNORE INTO `{table_name}` ({cols_sql}) VALUES ({placeholders})"
-    )
+    insert_sql = text(target_dialect.insert_ignore_sql(table_name, list(df.columns)))
 
     rows = df.astype(object).where(df.notna(), None).to_dict("records")
     inserted = 0

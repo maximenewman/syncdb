@@ -1,8 +1,16 @@
 from sqlalchemy import Engine
+
+from dialects import Dialect
 from .validate import validate_table
 
 
-def run_validation(source_engine: Engine, target_engine: Engine, tables: set) -> list:
+def run_validation(
+    source_engine: Engine,
+    target_engine: Engine,
+    source_dialect: Dialect,
+    target_dialect: Dialect,
+    tables: set,
+) -> list:
     """
     Compare primary keys for every table between source and target.
     Prints a per-table pass/fail summary and a final totals report.
@@ -11,7 +19,13 @@ def run_validation(source_engine: Engine, target_engine: Engine, tables: set) ->
 
     results = []
     for table_name in sorted(tables):
-        result = validate_table(table_name, source_engine, target_engine)
+        result = validate_table(
+            table_name,
+            source_engine,
+            target_engine,
+            source_dialect,
+            target_dialect,
+        )
         results.append(result)
 
     passed = sum(1 for result in results if result["status"] == "pass")

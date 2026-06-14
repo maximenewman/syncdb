@@ -16,8 +16,8 @@ def resolve_table_order(fk_df: pd.DataFrame, tables: set) -> list:
         in_degree[table] = 0
 
     for _, row in fk_df.iterrows():
-        child = row["TABLE_NAME"]
-        parent = row["REFERENCED_TABLE_NAME"]
+        child = row["table_name"]
+        parent = row["referenced_table_name"]
 
         if child in tables and parent in tables and child != parent:
             in_degree[child] += 1
