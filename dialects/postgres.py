@@ -174,14 +174,36 @@ class PostgresDialect(Dialect):
             name for name, type_name in column_types.items()
             if type_name == "boolean"
         ]
-        if not boolean_columns:
+        # MySQL stores NUL bytes in character columns; Postgres text types
+        # cannot hold them and reject the whole batch. Stripping is the only
+        # option short of refusing to migrate the row, but it does change the
+        # value, so it is counted and reported rather than done silently.
+        text_columns = [
+            name for name, type_name in column_types.items()
+            if type_name.startswith(("text", "character", "varchar", "char"))
+        ]
+
+        if not boolean_columns and not text_columns:
             return rows
 
+        stripped = 0
         for row in rows:
             for column in boolean_columns:
                 value = row.get(column)
                 if value is not None and not isinstance(value, bool):
                     row[column] = bool(value)
+
+            for column in text_columns:
+                value = row.get(column)
+                if isinstance(value, str) and "\x00" in value:
+                    row[column] = value.replace("\x00", "")
+                    stripped += 1
+
+        if stripped:
+            print(
+                f"  stripped NUL bytes from {stripped} value(s); "
+                f"Postgres text columns cannot store them"
+            )
         return rows
 
     def render_create_table(self, spec: TableSpec) -> str:

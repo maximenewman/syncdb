@@ -190,6 +190,43 @@ class TestBooleanCoercion:
         assert MySQLDialect().coerce_rows(rows, {"flag": "boolean"}) == [{"flag": 1}]
 
 
+class TestNulByteStripping:
+    """MySQL stores NUL bytes in text; Postgres rejects the whole batch."""
+
+    @pytest.mark.parametrize(
+        "native_type",
+        ["text", "character varying(255)", "character(10)", "varchar(50)"],
+    )
+    def test_nul_is_stripped_from_character_columns(self, postgres, native_type):
+        rows = [{"note": "before\x00after"}]
+        result = postgres.coerce_rows(rows, {"note": native_type})
+        assert result == [{"note": "beforeafter"}]
+
+    def test_multiple_nuls_all_go(self, postgres):
+        rows = [{"note": "\x00a\x00b\x00"}]
+        assert postgres.coerce_rows(rows, {"note": "text"}) == [{"note": "ab"}]
+
+    def test_clean_values_are_untouched(self, postgres):
+        rows = [{"note": "nothing wrong here"}]
+        assert postgres.coerce_rows(rows, {"note": "text"})[0]["note"] == (
+            "nothing wrong here"
+        )
+
+    def test_none_is_preserved(self, postgres):
+        assert postgres.coerce_rows([{"note": None}], {"note": "text"}) == [
+            {"note": None}
+        ]
+
+    def test_stripping_is_reported_not_silent(self, postgres, capsys):
+        postgres.coerce_rows([{"note": "a\x00b"}], {"note": "text"})
+        assert "stripped NUL bytes" in capsys.readouterr().out
+
+    def test_boolean_and_nul_coercion_compose(self, postgres):
+        rows = [{"flag": 1, "note": "a\x00b"}]
+        result = postgres.coerce_rows(rows, {"flag": "boolean", "note": "text"})
+        assert result == [{"flag": True, "note": "ab"}]
+
+
 class TestUnsupportedCapabilities:
     def test_mysql_cannot_render_ddl_yet(self):
         # MySQL works as a translation source but not as a target; the error
