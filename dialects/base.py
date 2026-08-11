@@ -1,8 +1,23 @@
 from abc import ABC, abstractmethod
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import pandas as pd
-from sqlalchemy import Engine
+from sqlalchemy import Connection, Engine
+
+if TYPE_CHECKING:
+    # Imported for typing only: schema imports dialects, so a runtime import
+    # here would be circular.
+    from schema.spec import TableSpec
+
+
+class FKCheckPermissionError(Exception):
+    """
+    Raised when the server refuses to toggle foreign key enforcement.
+
+    Postgres gates `session_replication_role` behind superuser, so this is
+    expected on managed instances. Callers should treat it as a downgrade
+    (rely on FK-ordered loading) rather than a fatal error.
+    """
 
 
 class Dialect(ABC):
@@ -15,6 +30,16 @@ class Dialect(ABC):
       - get_columns: column_name, column_type, is_nullable, column_default,
         ordinal_position
       - get_foreign_keys: table_name, referenced_table_name
+
+    Standardized value conventions:
+      - is_nullable is the string 'YES' or 'NO', matching INFORMATION_SCHEMA.
+      - column_type is the full type including modifiers ('varchar(255)' on
+        MySQL, 'character varying(255)' on Postgres). Types are NOT normalized
+        across backends; comparing them across dialects is the mapping layer's
+        job, not this one's.
+      - Table and column names are returned exactly as the catalog stores them.
+        No case folding is applied, so a MySQL `Users` and a Postgres `users`
+        are distinct names to every caller.
     """
 
     name: str
@@ -36,21 +61,91 @@ class Dialect(ABC):
         """Return ordered PK column names, or empty list if no PK."""
 
     @abstractmethod
-    def set_fk_checks(self, engine: Engine, enabled: bool) -> None:
-        """Enable or disable FK constraint enforcement on this connection."""
+    def set_fk_checks(self, connection: Connection, enabled: bool) -> None:
+        """
+        Enable or disable FK constraint enforcement.
+
+        Takes a Connection rather than an Engine because the underlying switch
+        is session-scoped on every supported backend: the caller must run its
+        inserts on this same connection for the setting to apply, and must
+        commit for it to outlive the current transaction.
+
+        Raises FKCheckPermissionError if the server refuses the change.
+        """
 
     @abstractmethod
-    def select_all_sql(self, table: str) -> str:
-        """SQL to read every row of a table."""
-
-    @abstractmethod
-    def count_rows_sql(self, table: str) -> str:
-        """SQL to count rows in a table."""
-
-    @abstractmethod
-    def insert_ignore_sql(self, table: str, columns: Sequence[str]) -> str:
+    def insert_skipping_duplicates_sql(self, table: str, columns: Sequence[str]) -> str:
         """SQL that inserts a row and silently skips on PK/unique conflict."""
 
     @abstractmethod
     def quote_identifier(self, name: str) -> str:
         """Quote a table or column name for safe interpolation."""
+
+    def reset_sequences(self, connection: Connection, table: str) -> int:
+        """
+        Re-point auto-generated key sequences past the migrated rows.
+
+        A migration inserts explicit key values, which leaves the backend's
+        own generator untouched and still pointing at the start. The next
+        insert that omits a key would then collide with migrated data.
+
+        Returns the number of sequences adjusted. Default is a no-op for
+        backends where inserting an explicit value advances the generator.
+        """
+        return 0
+
+    def coerce_rows(
+        self, rows: list[dict], column_types: dict[str, str]
+    ) -> list[dict]:
+        """
+        Adapt source values to what this backend accepts on insert.
+
+        column_types maps column name to this backend's own native type, as
+        reported by get_columns. Default is to pass rows through untouched;
+        override only where a backend rejects a value another one produces.
+        """
+        return rows
+
+    def select_all_sql(self, table: str) -> str:
+        """SQL to read every row of a table."""
+        return f"SELECT * FROM {self.quote_identifier(table)}"
+
+    def count_rows_sql(self, table: str) -> str:
+        """SQL to count rows in a table."""
+        return f"SELECT COUNT(*) FROM {self.quote_identifier(table)}"
+
+    # -- Schema translation ------------------------------------------------
+    #
+    # Optional capabilities, needed only to create the target's tables. A
+    # dialect is usable as a migration *source* without render_*, and as a
+    # migration *target* without describe_table. Both default to raising a
+    # message naming what is missing rather than being abstract, so adding a
+    # dialect does not require implementing schema translation up front.
+
+    def describe_table(self, engine: Engine, table: str) -> "TableSpec":
+        """Describe a table in backend-neutral terms (see schema.spec)."""
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot describe tables, so it cannot be a "
+            f"schema-translation source."
+        )
+
+    def render_create_table(self, spec: "TableSpec") -> str:
+        """Render CREATE TABLE for a TableSpec."""
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot render DDL, so it cannot be a "
+            f"schema-translation target."
+        )
+
+    def render_indexes(self, spec: "TableSpec") -> list[str]:
+        """Render index statements for a TableSpec. Empty list if none."""
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot render DDL, so it cannot be a "
+            f"schema-translation target."
+        )
+
+    def render_foreign_keys(self, spec: "TableSpec") -> list[str]:
+        """Render FK statements for a TableSpec. Empty list if none."""
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot render DDL, so it cannot be a "
+            f"schema-translation target."
+        )
