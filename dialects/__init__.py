@@ -1,11 +1,13 @@
 from sqlalchemy import Engine
 
-from .base import Dialect
+from .base import Dialect, FKCheckPermissionError
 from .mysql import MySQLDialect
+from .postgres import PostgresDialect
 
 
 _REGISTRY: dict[str, type[Dialect]] = {
-    "mysql": MySQLDialect,
+    MySQLDialect.name: MySQLDialect,
+    PostgresDialect.name: PostgresDialect,
 }
 
 
@@ -21,4 +23,10 @@ def get_dialect(engine: Engine) -> Dialect:
         )
 
 
-__all__ = ["Dialect", "MySQLDialect", "get_dialect"]
+__all__ = [
+    "Dialect",
+    "FKCheckPermissionError",
+    "MySQLDialect",
+    "PostgresDialect",
+    "get_dialect",
+]
