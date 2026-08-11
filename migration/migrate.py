@@ -33,6 +33,14 @@ def run_migration(
 
         for table_name in table_order:
             try:
+                # Read on the engine, not target_connection: pandas would
+                # open an implicit transaction on it and collide with the
+                # per-table begin() below.
+                target_columns = target_dialect.get_columns(target_engine, table_name)
+                column_types = dict(
+                    zip(target_columns["column_name"], target_columns["column_type"])
+                )
+
                 stats = migrate_table(
                     table_name,
                     source_engine,
@@ -40,6 +48,7 @@ def run_migration(
                     source_dialect,
                     target_dialect,
                     batch_size,
+                    target_column_types=column_types,
                 )
                 results.append(stats)
             except Exception as error:

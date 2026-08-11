@@ -11,6 +11,7 @@ def migrate_table(
     source_dialect: Dialect,
     target_dialect: Dialect,
     batch_size: int = 100,
+    target_column_types: dict[str, str] | None = None,
 ) -> dict:
     """
     Extract all rows from a source table and insert into the target,
@@ -36,6 +37,7 @@ def migrate_table(
     )
 
     rows = df.astype(object).where(df.notna(), None).to_dict("records")
+    rows = target_dialect.coerce_rows(rows, target_column_types or {})
     inserted = 0
 
     with target_connection.begin():

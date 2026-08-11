@@ -1,8 +1,13 @@
 from abc import ABC, abstractmethod
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import pandas as pd
 from sqlalchemy import Connection, Engine
+
+if TYPE_CHECKING:
+    # Imported for typing only: schema imports dialects, so a runtime import
+    # here would be circular.
+    from schema.spec import TableSpec
 
 
 class FKCheckPermissionError(Exception):
@@ -76,6 +81,18 @@ class Dialect(ABC):
     def quote_identifier(self, name: str) -> str:
         """Quote a table or column name for safe interpolation."""
 
+    def coerce_rows(
+        self, rows: list[dict], column_types: dict[str, str]
+    ) -> list[dict]:
+        """
+        Adapt source values to what this backend accepts on insert.
+
+        column_types maps column name to this backend's own native type, as
+        reported by get_columns. Default is to pass rows through untouched;
+        override only where a backend rejects a value another one produces.
+        """
+        return rows
+
     def select_all_sql(self, table: str) -> str:
         """SQL to read every row of a table."""
         return f"SELECT * FROM {self.quote_identifier(table)}"
@@ -83,3 +100,39 @@ class Dialect(ABC):
     def count_rows_sql(self, table: str) -> str:
         """SQL to count rows in a table."""
         return f"SELECT COUNT(*) FROM {self.quote_identifier(table)}"
+
+    # -- Schema translation ------------------------------------------------
+    #
+    # Optional capabilities, needed only to create the target's tables. A
+    # dialect is usable as a migration *source* without render_*, and as a
+    # migration *target* without describe_table. Both default to raising a
+    # message naming what is missing rather than being abstract, so adding a
+    # dialect does not require implementing schema translation up front.
+
+    def describe_table(self, engine: Engine, table: str) -> "TableSpec":
+        """Describe a table in backend-neutral terms (see schema.spec)."""
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot describe tables, so it cannot be a "
+            f"schema-translation source."
+        )
+
+    def render_create_table(self, spec: "TableSpec") -> str:
+        """Render CREATE TABLE for a TableSpec."""
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot render DDL, so it cannot be a "
+            f"schema-translation target."
+        )
+
+    def render_indexes(self, spec: "TableSpec") -> list[str]:
+        """Render index statements for a TableSpec. Empty list if none."""
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot render DDL, so it cannot be a "
+            f"schema-translation target."
+        )
+
+    def render_foreign_keys(self, spec: "TableSpec") -> list[str]:
+        """Render FK statements for a TableSpec. Empty list if none."""
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot render DDL, so it cannot be a "
+            f"schema-translation target."
+        )
