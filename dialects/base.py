@@ -81,6 +81,19 @@ class Dialect(ABC):
     def quote_identifier(self, name: str) -> str:
         """Quote a table or column name for safe interpolation."""
 
+    def reset_sequences(self, connection: Connection, table: str) -> int:
+        """
+        Re-point auto-generated key sequences past the migrated rows.
+
+        A migration inserts explicit key values, which leaves the backend's
+        own generator untouched and still pointing at the start. The next
+        insert that omits a key would then collide with migrated data.
+
+        Returns the number of sequences adjusted. Default is a no-op for
+        backends where inserting an explicit value advances the generator.
+        """
+        return 0
+
     def coerce_rows(
         self, rows: list[dict], column_types: dict[str, str]
     ) -> list[dict]:

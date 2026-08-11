@@ -107,6 +107,17 @@ ORDER BY k.ord
 """
 
 
+# Covers both GENERATED ... AS IDENTITY and the older serial/nextval form.
+_IDENTITY_COLUMNS = """
+SELECT column_name
+FROM information_schema.columns
+WHERE table_schema = current_schema()
+  AND table_name = :table_name
+  AND (is_identity = 'YES' OR column_default LIKE 'nextval(%')
+ORDER BY ordinal_position
+"""
+
+
 class PostgresDialect(Dialect):
     # Matches SQLAlchemy's backend name so the registry lookup in
     # dialects/__init__.py resolves it for both psycopg and psycopg2 URLs.
@@ -163,6 +174,36 @@ class PostgresDialect(Dialect):
     def quote_identifier(self, name: str) -> str:
         escaped = name.replace('"', '""')
         return f'"{escaped}"'
+
+    def reset_sequences(self, connection: Connection, table: str) -> int:
+        # MySQL advances AUTO_INCREMENT when you insert an explicit id;
+        # Postgres does not do the equivalent for identity columns, so after
+        # a migration every sequence still starts at 1 and the app's next
+        # keyless insert would collide with migrated rows.
+        identity_columns = connection.execute(
+            text(_IDENTITY_COLUMNS), {"table_name": table}
+        ).scalars().all()
+
+        quoted_table = self.quote_identifier(table)
+        adjusted = 0
+        for column in identity_columns:
+            sequence = connection.execute(
+                text("SELECT pg_get_serial_sequence(:qualified, :column)"),
+                {"qualified": quoted_table, "column": column},
+            ).scalar()
+            if sequence is None:
+                continue
+            # is_called=false so the next value returned is exactly max+1.
+            connection.execute(
+                text(
+                    f"SELECT setval(:sequence, COALESCE("
+                    f"(SELECT MAX({self.quote_identifier(column)}) "
+                    f"FROM {quoted_table}), 0) + 1, false)"
+                ),
+                {"sequence": sequence},
+            )
+            adjusted += 1
+        return adjusted
 
     def coerce_rows(
         self, rows: list[dict], column_types: dict[str, str]

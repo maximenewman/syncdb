@@ -55,6 +55,19 @@ def run_migration(
                 failed.append({"table": table_name, "error": str(error)})
                 print(f"{table_name} failed: {error}")
 
+        # Inserting explicit key values leaves the target's own key generator
+        # untouched, so it must be advanced past the migrated rows before
+        # anything else writes to these tables.
+        sequences = 0
+        for stats in results:
+            if stats["status"] == "ok":
+                sequences += target_dialect.reset_sequences(
+                    target_connection, stats["table"]
+                )
+        if sequences:
+            target_connection.commit()
+            print(f"Reset {sequences} key sequence(s) past the migrated rows")
+
         if fk_checks_disabled:
             set_fk_checks(target_connection, target_dialect, enabled=True)
 

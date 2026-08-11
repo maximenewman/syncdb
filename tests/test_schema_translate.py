@@ -227,6 +227,13 @@ class TestNulByteStripping:
         assert result == [{"flag": True, "note": "ab"}]
 
 
+class TestSequenceReset:
+    def test_mysql_needs_no_reset(self):
+        # Inserting an explicit id advances AUTO_INCREMENT on its own, so
+        # MySQL has nothing to fix up and reports zero adjustments.
+        assert MySQLDialect().reset_sequences(connection=None, table="users") == 0
+
+
 class TestUnsupportedCapabilities:
     def test_mysql_cannot_render_ddl_yet(self):
         # MySQL works as a translation source but not as a target; the error
