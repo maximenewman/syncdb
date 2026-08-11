@@ -164,6 +164,7 @@ syncdb runs in five phases:
 - **Identical names assumed** — Source and target must use the same table and column names, compared case-sensitively. A MySQL `Users` table will not match a Postgres `users` table. Renames and computed transformations are not supported.
 - **Types are not translated** — `compare` reports each column's native type verbatim, so every column of a MySQL → Postgres pair shows as `type_changed` (`int(11)` vs `integer`). The target's tables must already exist with types the source data fits into; syncdb moves rows, it does not create or alter schema.
 - **Inserts only** — Existing rows in the target are never updated. If you need to overwrite target data with source data, this tool is not the right fit.
+- **NUL bytes are stripped** — MySQL stores `0x00` inside character columns; Postgres text types cannot hold them and reject the entire batch. Migrating to Postgres removes them and reports how many values were changed per batch. This is the one place syncdb alters a value rather than copying it.
 - **No streaming for large tables** — Each table is fully read into memory before inserting. For tables with millions of rows, consider increasing batch size or running on a machine with sufficient RAM.
 
 ## Project structure
