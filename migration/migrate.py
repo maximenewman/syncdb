@@ -21,27 +21,33 @@ def run_migration(
     fk_graph = get_fk_graph(source_engine, source_dialect)
     table_order = resolve_table_order(fk_graph, tables)
 
-    set_fk_checks(target_engine, target_dialect, enabled=False)
-
     results = []
     failed = []
 
-    for table_name in table_order:
-        try:
-            stats = migrate_table(
-                table_name,
-                source_engine,
-                target_engine,
-                source_dialect,
-                target_dialect,
-                batch_size,
-            )
-            results.append(stats)
-        except Exception as error:
-            failed.append({"table": table_name, "error": str(error)})
-            print(f"{table_name} failed: {error}")
+    # One connection for the whole migration: disabling FK checks only affects
+    # the session it ran on, so the inserts have to share it.
+    with target_engine.connect() as target_connection:
+        fk_checks_disabled = set_fk_checks(
+            target_connection, target_dialect, enabled=False
+        )
 
-    set_fk_checks(target_engine, target_dialect, enabled=True)
+        for table_name in table_order:
+            try:
+                stats = migrate_table(
+                    table_name,
+                    source_engine,
+                    target_connection,
+                    source_dialect,
+                    target_dialect,
+                    batch_size,
+                )
+                results.append(stats)
+            except Exception as error:
+                failed.append({"table": table_name, "error": str(error)})
+                print(f"{table_name} failed: {error}")
+
+        if fk_checks_disabled:
+            set_fk_checks(target_connection, target_dialect, enabled=True)
 
     total_inserted = sum(stats["inserted"] for stats in results)
     print(f"{'='*20}")

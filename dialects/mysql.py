@@ -1,13 +1,14 @@
 from typing import Sequence
 
 import pandas as pd
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, Engine, text
+from sqlalchemy.exc import DBAPIError
 
-from .base import Dialect
+from .base import Dialect, FKCheckPermissionError
 
 
 _ALL_TABLES = """
-SELECT TABLE_NAME
+SELECT TABLE_NAME AS table_name
 FROM INFORMATION_SCHEMA.TABLES
 WHERE TABLE_TYPE = 'BASE TABLE'
   AND TABLE_SCHEMA = DATABASE()
@@ -51,7 +52,7 @@ class MySQLDialect(Dialect):
 
     def get_all_tables(self, engine: Engine) -> set[str]:
         df = pd.read_sql(text(_ALL_TABLES), engine)
-        return set(df["TABLE_NAME"])
+        return set(df["table_name"])
 
     def get_columns(self, engine: Engine, table: str) -> pd.DataFrame:
         return pd.read_sql(
@@ -71,19 +72,16 @@ class MySQLDialect(Dialect):
         )
         return df["column_name"].tolist()
 
-    def set_fk_checks(self, engine: Engine, enabled: bool) -> None:
+    def set_fk_checks(self, connection: Connection, enabled: bool) -> None:
         value = 1 if enabled else 0
-        with engine.connect() as conn:
-            conn.execute(text(f"SET FOREIGN_KEY_CHECKS = {value}"))
-            conn.commit()
+        try:
+            connection.execute(text(f"SET FOREIGN_KEY_CHECKS = {value}"))
+        except DBAPIError as error:
+            raise FKCheckPermissionError(
+                f"server refused SET FOREIGN_KEY_CHECKS = {value}: {error}"
+            ) from error
 
-    def select_all_sql(self, table: str) -> str:
-        return f"SELECT * FROM {self.quote_identifier(table)}"
-
-    def count_rows_sql(self, table: str) -> str:
-        return f"SELECT COUNT(*) FROM {self.quote_identifier(table)}"
-
-    def insert_ignore_sql(self, table: str, columns: Sequence[str]) -> str:
+    def insert_skipping_duplicates_sql(self, table: str, columns: Sequence[str]) -> str:
         cols_sql = ", ".join(self.quote_identifier(c) for c in columns)
         placeholders = ", ".join(f":{c}" for c in columns)
         return (
