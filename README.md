@@ -1,10 +1,12 @@
 # syncdb
 
-A command-line tool for migrating data between MySQL databases. Built for the common real-world scenario: you have an old database and a new one with the same (or similar) schema, and you need to bring them in sync — without overwriting data that already exists in the target.
+A command-line tool for migrating data between SQL databases. Built for the common real-world scenario: you have an old database and a new one with the same (or similar) schema, and you need to bring them in sync — without overwriting data that already exists in the target.
+
+Supports **MySQL** and **PostgreSQL** on either side, so MySQL → MySQL, MySQL → Postgres, and Postgres → Postgres migrations all work through the same commands.
 
 ## What it does
 
-syncdb connects to two MySQL databases, figures out what's different between them, and moves the missing rows from source to target. It handles the details that make database migrations tricky: foreign key ordering, schema comparison, batch processing, conflict handling, and post-migration validation.
+syncdb connects to two databases, figures out what's different between them, and moves the missing rows from source to target. It handles the details that make database migrations tricky: foreign key ordering, schema comparison, batch processing, conflict handling, and post-migration validation.
 
 ```
 syncdb compare  --source $SOURCE_DB_URL --target $TARGET_DB_URL    # See schema differences
@@ -16,14 +18,15 @@ syncdb validate --source $SOURCE_DB_URL --target $TARGET_DB_URL    # Verify ever
 
 Most database migration tools fall into two camps: full-featured ETL frameworks that require a week of configuration, or raw `mysqldump` which gives you no control over what happens when schemas don't perfectly match or the target already has data.
 
-syncdb sits in between. It's a focused tool that does one thing well: sync data between two MySQL databases with full visibility into what's happening at each step.
+syncdb sits in between. It's a focused tool that does one thing well: sync data between two databases with full visibility into what's happening at each step.
 
 ## Features
 
 - **Auto-discovery** — Finds shared tables between source and target automatically. No config files to maintain.
+- **Pluggable dialects** — Each backend's introspection and SQL generation lives behind one `Dialect` interface, so source and target can be different engines.
 - **Schema comparison** — Compares every column across both databases and reports differences: missing columns, type changes, tables that exist in only one side.
 - **Foreign key ordering** — Resolves the dependency graph so parent tables load before children. No FK violations during migration.
-- **INSERT IGNORE** — Skips rows that already exist in the target. Existing data is never overwritten.
+- **Conflict-skipping inserts** — Rows that already exist in the target are skipped, never overwritten (`INSERT IGNORE` on MySQL, `ON CONFLICT DO NOTHING` on Postgres).
 - **Batch processing** — Configurable batch size (default 100 rows) to control memory usage and provide progress visibility.
 - **Per-table error handling** — If one table fails, the rest continue. You get a clear report of what succeeded and what needs attention.
 - **Primary key validation** — After migration, verifies that every primary key from the source exists in the target. Reports exactly which rows are missing if any.
@@ -42,7 +45,8 @@ uv sync
 - Python 3.12+
 - Access to both databases (source and target)
 - **Every table must have a primary key.** syncdb uses primary keys for both row-skip semantics (`INSERT IGNORE`/`ON CONFLICT DO NOTHING`) and post-migration validation. Tables without a PK are skipped during validation and cannot be safely re-run.
-- **Postgres targets require elevated privileges.** Disabling FK checks on Postgres (`session_replication_role = replica`) requires superuser or `pg_write_server_files` membership. Without it, FK-violating loads will fail mid-migration. MySQL targets only need normal write access.
+- **Postgres URLs must name the driver.** syncdb ships psycopg 3, so use `postgresql+psycopg://…`. A bare `postgresql://…` makes SQLAlchemy reach for psycopg2 and fail at startup.
+- **Disabling FK checks on Postgres needs superuser.** `session_replication_role = replica` is superuser-gated, and managed providers (DigitalOcean, RDS, Cloud SQL) do not grant it. syncdb detects the refusal, prints a warning, and continues — tables still load in FK-dependency order, so this only matters if your schema has *circular* FK dependencies. MySQL targets only need normal write access.
 
 ## Quick start
 
@@ -52,8 +56,17 @@ Connection strings can be passed directly as flags or set via environment variab
 
 ```
 SOURCE_DB_URL=mysql+pymysql://user:pass@source-host:3306/mydb
-TARGET_DB_URL=mysql+pymysql://user:pass@target-host:3306/mydb
+TARGET_DB_URL=postgresql+psycopg://user:pass@target-host:5432/mydb?sslmode=require
 ```
+
+Both sides accept either backend:
+
+| Backend | Connection string |
+|---|---|
+| MySQL / MariaDB | `mysql+pymysql://user:pass@host:3306/dbname` |
+| PostgreSQL | `postgresql+psycopg://user:pass@host:5432/dbname` |
+
+Postgres connections are scoped to `current_schema()` — the first writable entry on the connection's `search_path`, normally `public`. Set `?options=-csearch_path%3Dmyschema` in the URL to target a different one.
 
 ### 2. Compare schemas
 
@@ -105,8 +118,8 @@ syncdb validate \
 
 | Flag | Description | Default |
 |---|---|---|
-| `--source` | MySQL connection string for the source database | `$SOURCE_DB_URL` env var |
-| `--target` | MySQL connection string for the target database | `$TARGET_DB_URL` env var |
+| `--source` | SQLAlchemy connection string for the source database | `$SOURCE_DB_URL` env var |
+| `--target` | SQLAlchemy connection string for the target database | `$TARGET_DB_URL` env var |
 | `--tables` | Comma-separated list of specific tables to process | All shared tables |
 | `--batch-size` | Number of rows per INSERT batch | 100 |
 | `--dry-run` | Preview tables to migrate without writing any data | Off |
@@ -115,17 +128,17 @@ syncdb validate \
 
 syncdb runs in five phases:
 
-1. **Introspect** — Queries `INFORMATION_SCHEMA` on both databases to pull table and column metadata.
+1. **Introspect** — Queries each backend's catalog (`INFORMATION_SCHEMA` on MySQL, `information_schema` plus `pg_catalog` on Postgres) to pull table and column metadata.
 2. **Diff** — Compares schemas to identify matched columns, type changes, and missing fields.
 3. **Order** — Builds a foreign key dependency graph and topologically sorts tables so parents load before children.
-4. **Migrate** — Extracts rows from source and inserts into target using `INSERT IGNORE` in configurable batches. FK constraints are temporarily disabled during loading for safety and performance, then re-enabled after.
+4. **Migrate** — Extracts rows from source and inserts into target with conflict-skipping inserts in configurable batches. FK constraints are temporarily disabled during loading, then re-enabled after. All writes share one connection, because the FK switch is session-scoped on both backends.
 5. **Validate** — Compares primary keys between source and target to verify every source row exists in the target.
 
 ## Limitations
 
-- **MySQL only** — Currently supports MySQL-to-MySQL migrations.
-- **Same schema assumed** — Works best when source and target share the same table and column structure. Column renames and computed transformations are not supported.
-- **INSERT IGNORE only** — Existing rows in the target are never updated. If you need to overwrite target data with source data, this tool is not the right fit.
+- **Identical names assumed** — Source and target must use the same table and column names, compared case-sensitively. A MySQL `Users` table will not match a Postgres `users` table. Renames and computed transformations are not supported.
+- **Types are not translated** — `compare` reports each column's native type verbatim, so every column of a MySQL → Postgres pair shows as `type_changed` (`int(11)` vs `integer`). The target's tables must already exist with types the source data fits into; syncdb moves rows, it does not create or alter schema.
+- **Inserts only** — Existing rows in the target are never updated. If you need to overwrite target data with source data, this tool is not the right fit.
 - **No streaming for large tables** — Each table is fully read into memory before inserting. For tables with millions of rows, consider increasing batch size or running on a machine with sufficient RAM.
 
 ## Project structure
