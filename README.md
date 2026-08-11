@@ -9,9 +9,11 @@ Supports **MySQL** and **PostgreSQL** on either side, so MySQL → MySQL, MySQL 
 syncdb connects to two databases, figures out what's different between them, and moves the missing rows from source to target. It handles the details that make database migrations tricky: foreign key ordering, schema comparison, batch processing, conflict handling, and post-migration validation.
 
 ```
-syncdb compare  --source $SOURCE_DB_URL --target $TARGET_DB_URL    # See schema differences
-syncdb migrate  --source $SOURCE_DB_URL --target $TARGET_DB_URL    # Move missing rows
-syncdb validate --source $SOURCE_DB_URL --target $TARGET_DB_URL    # Verify everything landed
+syncdb compare       --source $SOURCE_DB_URL --target $TARGET_DB_URL   # See schema differences
+syncdb create-schema --source $SOURCE_DB_URL --target $TARGET_DB_URL   # Translate DDL for the target
+syncdb rehearse      --source $SOURCE_DB_URL                           # Full dry run in Docker
+syncdb migrate       --source $SOURCE_DB_URL --target $TARGET_DB_URL   # Move missing rows
+syncdb validate      --source $SOURCE_DB_URL --target $TARGET_DB_URL   # Verify everything landed
 ```
 
 ## Why this exists
@@ -83,7 +85,30 @@ This outputs a table-by-table and column-by-column diff showing:
 - Columns that were added, removed, or changed type
 - Row counts for every table in both databases
 
-### 3. Dry run
+### 3. Create the target schema
+
+**`migrate` only moves rows between tables that already exist on both sides.** Pointed at an empty target it reports success while doing nothing, because there are no shared tables. If the target is empty, translate the schema first:
+
+```bash
+syncdb create-schema \
+  --source "mysql+pymysql://user:pass@source-host:3306/mydb" \
+  --target "postgresql+psycopg://user:pass@target-host:5432/mydb"
+```
+
+This prints the DDL for review. Add `--apply` to execute it. Tables are emitted in FK-dependency order with foreign keys last, so the script runs top to bottom without forward references.
+
+### 4. Rehearse
+
+Before touching a real target, run the whole migration against a disposable Postgres in Docker:
+
+```bash
+syncdb rehearse --source "mysql+pymysql://user:pass@source-host:3306/mydb" \
+                --image postgres:15.18
+```
+
+This translates the schema, migrates every row, validates by primary key, then **migrates a second time and asserts that zero rows are inserted** — proving the run is repeatable and conflict-skipping works. Match `--image` to your real target's version. Nothing touches a real database, so this is where type and schema problems should surface. Use `--keep` to leave the container up for inspection.
+
+### 5. Dry run
 
 Preview which tables would be migrated without writing anything:
 
